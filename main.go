@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build js && wasm
+
 package main
 
 import (
@@ -13,6 +15,8 @@ var (
 	motionFunc js.Func
 	listening  bool
 	permWait   bool
+
+	measurementFilter = newKalman3(accelProcessNoise, accelMeasurementNoise)
 )
 
 func main() {
@@ -98,6 +102,7 @@ func attachListener() {
 	if listening {
 		return
 	}
+	measurementFilter.reset()
 	motionFunc = js.FuncOf(onMotion)
 	if _, err := callJS(js.Global(), "addEventListener", "devicemotion", motionFunc); err != nil {
 		motionFunc.Release()
@@ -116,6 +121,7 @@ func onMotion(this js.Value, args []js.Value) any {
 	if !ok {
 		return nil
 	}
+	x, y, z = measurementFilter.update(x, y, z, motionInterval(args[0]))
 	text := fmt.Sprintf("X: %.2f, Y: %.2f, Z: %.2f", x, y, z)
 	//js.Global().Get("alert").Invoke(fmt.Sprintf("X: %.2f, Y: %.2f, Z: %.2f\n", x, y, z))
 	el := js.Global().Get("document").Call("getElementById", "measurements")
@@ -141,6 +147,17 @@ func readAcceleration(event js.Value) (x, y, z float64, ok bool) {
 		}
 	}
 	return 0, 0, 0, false
+}
+
+// motionInterval returns the sample period in seconds. DeviceMotionEvent
+// reports interval in milliseconds, and some browsers report 0.
+func motionInterval(event js.Value) float64 {
+	const fallback = 1.0 / 60
+	ms, ok := jsFloat(event.Get("interval"))
+	if !ok || ms <= 0 || ms > 1000 {
+		return fallback
+	}
+	return ms / 1000
 }
 
 func jsFloat(v js.Value) (float64, bool) {
