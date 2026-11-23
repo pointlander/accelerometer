@@ -140,12 +140,12 @@ func onMotion(this js.Value, args []js.Value) any {
 	dt := motionInterval(event)
 	if x, y, z, ok := readAcceleration(event); ok {
 		x, y, z = measurementFilter.update(x, y, z, dt)
-		accelLine = fmt.Sprintf("Accel: X: %.2f, Y: %.2f, Z: %.2f m/s²", x, y, z)
+		accelLine = fmt.Sprintf("Accel: X: %s, Y: %s, Z: %s m/s²", formatFloat(x), formatFloat(y), formatFloat(z))
 		//js.Global().Get("alert").Invoke(fmt.Sprintf("X: %.2f, Y: %.2f, Z: %.2f\n", x, y, z))
 	}
 	if alpha, beta, gamma, ok := readRotationRate(event); ok {
 		alpha, beta, gamma = gyroFilter.update(alpha, beta, gamma, dt)
-		gyroLine = fmt.Sprintf("Gyro: alpha: %.2f, beta: %.2f, gamma: %.2f °/s", alpha, beta, gamma)
+		gyroLine = fmt.Sprintf("Gyro: alpha: %s, beta: %s, gamma: %s °/s", formatFloat(alpha), formatFloat(beta), formatFloat(gamma))
 	} else if gyroLine == "" {
 		gyroLine = "Gyro: unavailable"
 	}
@@ -212,12 +212,12 @@ func formatGPS(coords js.Value) string {
 	if !latOK || !lonOK {
 		return "GPS: unavailable"
 	}
-	text := fmt.Sprintf("GPS: %.5f, %.5f", lat, lon)
+	text := fmt.Sprintf("GPS: %s, %s", formatFloat(lat), formatFloat(lon))
 	if accuracy, ok := jsFloat(coords.Get("accuracy")); ok {
-		text += fmt.Sprintf(" (±%.0f m)", accuracy)
+		text += fmt.Sprintf(" (±%s m)", formatFloat(accuracy))
 	}
 	if altitude, ok := jsFloat(coords.Get("altitude")); ok {
-		text += fmt.Sprintf(", alt %.0f m", altitude)
+		text += fmt.Sprintf(", alt %s m", formatFloat(altitude))
 	}
 	return text
 }
