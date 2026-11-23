@@ -11,12 +11,22 @@
   </script>
   <style>
     #measurements { white-space: pre-line; margin-top: 1rem; font-family: ui-monospace, monospace; }
+    #path {
+      display: block;
+      width: min(100vw - 2rem, 640px);
+      height: auto;
+      margin-top: 1rem;
+      background: #f4f4f4;
+      border: 1px solid #ddd;
+    }
   </style>
 </head>
 <body>
   <button onclick="startMotionListener()">Enable Sensors</button>
   <div id="measurements">Accel: waiting
 Gyro: waiting
-GPS: waiting</div>
+GPS: waiting
+Nav: waiting</div>
+  <canvas id="path" width="640" height="640"></canvas>
 </body>
 </html>

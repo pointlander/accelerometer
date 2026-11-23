@@ -8,6 +8,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"syscall/js"
 )
 
@@ -26,6 +27,9 @@ var (
 	accelLine string
 	gyroLine  string
 	gpsLine   string
+	navLine   string
+
+	nav = newINS()
 )
 
 func main() {
@@ -42,6 +46,9 @@ func startMotionListener(this js.Value, args []js.Value) any {
 	}
 	//js.Global().Get("alert").Invoke("1")
 	if !gpsWatching {
+		nav = newINS()
+		navLine = ""
+		drawDebt = 0
 		watchGPS()
 	}
 	deviceMotionEvent := js.Global().Get("DeviceMotionEvent")
@@ -138,16 +145,34 @@ func onMotion(this js.Value, args []js.Value) any {
 	}
 	event := args[0]
 	dt := motionInterval(event)
-	if x, y, z, ok := readAcceleration(event); ok {
-		x, y, z = measurementFilter.update(x, y, z, dt)
+	ax, ay, az, accelOK := readAcceleration(event)
+	alpha, beta, gamma, gyroOK := readRotationRate(event)
+	if accelOK {
+		x, y, z := measurementFilter.update(ax, ay, az, dt)
 		accelLine = fmt.Sprintf("Accel: X: %s, Y: %s, Z: %s m/s²", formatFloat(x), formatFloat(y), formatFloat(z))
 		//js.Global().Get("alert").Invoke(fmt.Sprintf("X: %.2f, Y: %.2f, Z: %.2f\n", x, y, z))
 	}
-	if alpha, beta, gamma, ok := readRotationRate(event); ok {
-		alpha, beta, gamma = gyroFilter.update(alpha, beta, gamma, dt)
-		gyroLine = fmt.Sprintf("Gyro: alpha: %s, beta: %s, gamma: %s °/s", formatFloat(alpha), formatFloat(beta), formatFloat(gamma))
+	if gyroOK {
+		ga, gb, gg := gyroFilter.update(alpha, beta, gamma, dt)
+		gyroLine = fmt.Sprintf("Gyro: alpha: %s, beta: %s, gamma: %s °/s", formatFloat(ga), formatFloat(gb), formatFloat(gg))
 	} else if gyroLine == "" {
 		gyroLine = "Gyro: unavailable"
+	}
+	if accelOK {
+		const deg = math.Pi / 180
+		w := vec3{}
+		if gyroOK {
+			// rotationRate is degrees per second about z, x, y.
+			w = vec3{beta * deg, gamma * deg, alpha * deg}
+		}
+		wasReady := nav.ready
+		nav.Predict(vec3{ax, ay, az}, w, dt)
+		updateNavLine()
+		if !wasReady {
+			drawTrack()
+		} else {
+			noteDraw(dt)
+		}
 	}
 	renderMeasurements()
 	return nil
@@ -183,6 +208,18 @@ func watchGPS() {
 			gpsLine = "GPS: unavailable"
 		} else {
 			gpsLine = formatGPS(coords)
+			if lat, latOK := jsFloat(coords.Get("latitude")); latOK {
+				if lon, lonOK := jsFloat(coords.Get("longitude")); lonOK {
+					alt, altOK := jsFloat(coords.Get("altitude"))
+					accuracy := 10.0
+					if a, ok := jsFloat(coords.Get("accuracy")); ok && a > 0 {
+						accuracy = a
+					}
+					nav.UpdateGPS(lat, lon, alt, altOK, accuracy)
+					updateNavLine()
+					drawTrack()
+				}
+			}
 		}
 		renderMeasurements()
 		return nil
@@ -235,10 +272,21 @@ func renderMeasurements() {
 	if gps == "" {
 		gps = "GPS: waiting"
 	}
+	navText := navLine
+	if navText == "" {
+		navText = "Nav: waiting"
+	}
 	el := js.Global().Get("document").Call("getElementById", "measurements")
 	if el.Type() == js.TypeObject {
-		el.Set("textContent", accel+"\n"+gyro+"\n"+gps)
+		el.Set("textContent", accel+"\n"+gyro+"\n"+gps+"\n"+navText)
 	}
+}
+
+func updateNavLine() {
+	if !nav.ready && !nav.hasOrigin {
+		return
+	}
+	navLine = fmt.Sprintf("Nav: E:%s, N:%s, U:%s m", formatFloat(nav.p.x), formatFloat(nav.p.y), formatFloat(nav.p.z))
 }
 
 // readAcceleration prefers accelerationIncludingGravity and falls back to
