@@ -10,6 +10,10 @@ package main
 const (
 	accelProcessNoise     = 0.15 // variance added per second
 	accelMeasurementNoise = 0.05 // variance of one sample
+
+	// Gyro noise uses the same ratio, in (°/s)², so it settles to the same gain.
+	gyroProcessNoise     = 3
+	gyroMeasurementNoise = 1
 )
 
 // kalmanAxis estimates one acceleration axis. The state is the acceleration.

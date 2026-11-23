@@ -9,9 +9,14 @@
       go.run(result.instance);
     });
   </script>
+  <style>
+    #measurements { white-space: pre-line; margin-top: 1rem; }
+  </style>
 </head>
 <body>
-  <button onclick="startMotionListener()">Enable Accelerometer</button>
-  <div id="measurements"></div>
+  <button onclick="startMotionListener()">Enable Sensors</button>
+  <div id="measurements">Accel: waiting
+Gyro: waiting
+GPS: waiting</div>
 </body>
 </html>

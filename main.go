@@ -17,6 +17,15 @@ var (
 	permWait   bool
 
 	measurementFilter = newKalman3(accelProcessNoise, accelMeasurementNoise)
+	gyroFilter        = newKalman3(gyroProcessNoise, gyroMeasurementNoise)
+
+	gpsSuccess  js.Func
+	gpsFailure  js.Func
+	gpsWatching bool
+
+	accelLine string
+	gyroLine  string
+	gpsLine   string
 )
 
 func main() {
@@ -32,9 +41,15 @@ func startMotionListener(this js.Value, args []js.Value) any {
 		return nil
 	}
 	//js.Global().Get("alert").Invoke("1")
+	if !gpsWatching {
+		watchGPS()
+	}
 	deviceMotionEvent := js.Global().Get("DeviceMotionEvent")
 	if deviceMotionEvent.Type() != js.TypeFunction {
 		fmt.Println("DeviceMotionEvent is not supported on this device.")
+		accelLine = "Accel: not supported"
+		gyroLine = "Gyro: not supported"
+		renderMeasurements()
 		return nil
 	}
 	//js.Global().Get("alert").Invoke("2")
@@ -51,6 +66,7 @@ func startMotionListener(this js.Value, args []js.Value) any {
 	if err != nil {
 		permWait = false
 		fmt.Println("Motion permission request failed:", err)
+		markMotionUnavailable("permission failed")
 		return nil
 	}
 	//js.Global().Get("alert").Invoke("4")
@@ -75,12 +91,14 @@ func startMotionListener(this js.Value, args []js.Value) any {
 			attachListener()
 		} else {
 			fmt.Println("Motion permission denied.")
+			markMotionUnavailable("permission denied")
 		}
 		return nil
 	})
 	onError = js.FuncOf(func(this js.Value, args []js.Value) any {
 		defer release()
 		fmt.Println("Motion permission request failed:", jsDescribe(args))
+		markMotionUnavailable("permission failed")
 		return nil
 	})
 	//js.Global().Get("alert").Invoke("5")
@@ -103,6 +121,7 @@ func attachListener() {
 		return
 	}
 	measurementFilter.reset()
+	gyroFilter.reset()
 	motionFunc = js.FuncOf(onMotion)
 	if _, err := callJS(js.Global(), "addEventListener", "devicemotion", motionFunc); err != nil {
 		motionFunc.Release()
@@ -117,18 +136,109 @@ func onMotion(this js.Value, args []js.Value) any {
 	if len(args) == 0 || args[0].Type() != js.TypeObject {
 		return nil
 	}
-	x, y, z, ok := readAcceleration(args[0])
-	if !ok {
-		return nil
+	event := args[0]
+	dt := motionInterval(event)
+	if x, y, z, ok := readAcceleration(event); ok {
+		x, y, z = measurementFilter.update(x, y, z, dt)
+		accelLine = fmt.Sprintf("Accel: X: %.2f, Y: %.2f, Z: %.2f m/s²", x, y, z)
+		//js.Global().Get("alert").Invoke(fmt.Sprintf("X: %.2f, Y: %.2f, Z: %.2f\n", x, y, z))
 	}
-	x, y, z = measurementFilter.update(x, y, z, motionInterval(args[0]))
-	text := fmt.Sprintf("X: %.2f, Y: %.2f, Z: %.2f", x, y, z)
-	//js.Global().Get("alert").Invoke(fmt.Sprintf("X: %.2f, Y: %.2f, Z: %.2f\n", x, y, z))
+	if alpha, beta, gamma, ok := readRotationRate(event); ok {
+		alpha, beta, gamma = gyroFilter.update(alpha, beta, gamma, dt)
+		gyroLine = fmt.Sprintf("Gyro: alpha: %.2f, beta: %.2f, gamma: %.2f °/s", alpha, beta, gamma)
+	} else if gyroLine == "" {
+		gyroLine = "Gyro: unavailable"
+	}
+	renderMeasurements()
+	return nil
+}
+
+func markMotionUnavailable(reason string) {
+	if accelLine == "" {
+		accelLine = "Accel: " + reason
+	}
+	if gyroLine == "" {
+		gyroLine = "Gyro: " + reason
+	}
+	renderMeasurements()
+}
+
+func watchGPS() {
+	if gpsWatching {
+		return
+	}
+	gpsWatching = true
+	geo := js.Global().Get("navigator").Get("geolocation")
+	if geo.Type() != js.TypeObject {
+		gpsLine = "GPS: not supported"
+		renderMeasurements()
+		return
+	}
+	gpsSuccess = js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) == 0 || args[0].Type() != js.TypeObject {
+			return nil
+		}
+		coords := args[0].Get("coords")
+		if coords.Type() != js.TypeObject {
+			gpsLine = "GPS: unavailable"
+		} else {
+			gpsLine = formatGPS(coords)
+		}
+		renderMeasurements()
+		return nil
+	})
+	gpsFailure = js.FuncOf(func(this js.Value, args []js.Value) any {
+		gpsLine = "GPS: " + jsDescribe(args)
+		renderMeasurements()
+		return nil
+	})
+	_, err := callJS(geo, "watchPosition", gpsSuccess, gpsFailure, map[string]any{
+		"enableHighAccuracy": true,
+		"maximumAge":         0,
+		"timeout":            20000,
+	})
+	if err != nil {
+		gpsSuccess.Release()
+		gpsFailure.Release()
+		gpsWatching = false
+		gpsLine = "GPS: " + err.Error()
+		renderMeasurements()
+	}
+}
+
+func formatGPS(coords js.Value) string {
+	lat, latOK := jsFloat(coords.Get("latitude"))
+	lon, lonOK := jsFloat(coords.Get("longitude"))
+	if !latOK || !lonOK {
+		return "GPS: unavailable"
+	}
+	text := fmt.Sprintf("GPS: %.5f, %.5f", lat, lon)
+	if accuracy, ok := jsFloat(coords.Get("accuracy")); ok {
+		text += fmt.Sprintf(" (±%.0f m)", accuracy)
+	}
+	if altitude, ok := jsFloat(coords.Get("altitude")); ok {
+		text += fmt.Sprintf(", alt %.0f m", altitude)
+	}
+	return text
+}
+
+func renderMeasurements() {
+	accel := accelLine
+	if accel == "" {
+		accel = "Accel: waiting"
+	}
+	gyro := gyroLine
+	if gyro == "" {
+		gyro = "Gyro: waiting"
+	}
+	gps := gpsLine
+	if gps == "" {
+		gps = "GPS: waiting"
+	}
 	el := js.Global().Get("document").Call("getElementById", "measurements")
 	if el.Type() == js.TypeObject {
-		el.Set("textContent", text)
+		el.Set("textContent", accel+"\n"+gyro+"\n"+gps)
 	}
-	return nil
 }
 
 // readAcceleration prefers accelerationIncludingGravity and falls back to
@@ -147,6 +257,22 @@ func readAcceleration(event js.Value) (x, y, z float64, ok bool) {
 		}
 	}
 	return 0, 0, 0, false
+}
+
+// readRotationRate reads the gyroscope angular velocity in degrees per second.
+// Any axis may be null.
+func readRotationRate(event js.Value) (alpha, beta, gamma float64, ok bool) {
+	rate := event.Get("rotationRate")
+	if rate.Type() != js.TypeObject {
+		return 0, 0, 0, false
+	}
+	alpha, aok := jsFloat(rate.Get("alpha"))
+	beta, bok := jsFloat(rate.Get("beta"))
+	gamma, gok := jsFloat(rate.Get("gamma"))
+	if !aok || !bok || !gok {
+		return 0, 0, 0, false
+	}
+	return alpha, beta, gamma, true
 }
 
 // motionInterval returns the sample period in seconds. DeviceMotionEvent
